@@ -3,6 +3,7 @@ import math
 import base64
 from datetime import date
 from pathlib import Path
+import tempfile
 
 import pandas as pd
 import streamlit as st
@@ -35,8 +36,6 @@ def _ensure_image(path_str: str) -> str:
 TITLE_BG = _ensure_image(str(_ASSETS_DIR / "title_bg.png"))
 BODY_BG  = _ensure_image(str(_ASSETS_DIR / "body_bg.png"))
 FINAL_BG = _ensure_image(str(_ASSETS_DIR / "final_bg.png"))
-MISSION_IMG = _ensure_image(str(_ASSETS_DIR / "radom_mission.png"))
-TEAM_IMG    = _ensure_image(str(_ASSETS_DIR / "radom_team.png"))
 
 def slide_size_in(prs):
     return prs.slide_width / EMU_PER_INCH, prs.slide_height / EMU_PER_INCH
@@ -44,6 +43,17 @@ def slide_size_in(prs):
 def add_full_bleed_bg(slide, image_path, prs):
     slide.shapes.add_picture(image_path, Inches(0), Inches(0),
                              width=prs.slide_width, height=prs.slide_height)
+
+def save_upload_to_tmp(uploaded_file, fallback_name: str) -> str | None:
+    """Persist an uploaded file to a temp path and return the path; None if nothing uploaded."""
+    if not uploaded_file:
+        return None
+    suffix = Path(uploaded_file.name).suffix or ".png"
+    tmp_dir = Path(tempfile.gettempdir())
+    tmp_path = tmp_dir / f"{fallback_name}{suffix}"
+    with open(tmp_path, "wb") as f:
+        f.write(uploaded_file.read())
+    return str(tmp_path)
 
 # ---------- Wrapping helpers ----------
 def wrap_chars(text: str, max_chars: int) -> list[str]:
@@ -90,22 +100,17 @@ def wrap_two_words_smart(text: str, pair_char_limit: int = 20) -> list[str]:
     lines = []
     i = 0
     while i < len(words):
-        # always place the first word
         first = words[i]
-        # attempt to place a second word
         if i + 1 < len(words):
             second = words[i + 1]
-            pair_len = len(first) + 1 + len(second)  # include a space
+            pair_len = len(first) + 1 + len(second)
             if pair_len >= pair_char_limit:
-                # too long as a pair => single word line
                 lines.append(first)
                 i += 1
             else:
-                # pair fits
                 lines.append(first + " " + second)
                 i += 2
         else:
-            # last single word
             lines.append(first)
             i += 1
     return lines
@@ -169,7 +174,7 @@ def add_left_bullets_vert_center(
 
 def add_center_paragraph(
     slide, prs, text, *, font_pt=30,
-    box_width_in=None,  # if None, uses full width minus margins
+    box_width_in=None,
     left_in=0.9, right_margin_in=0.9,
     top_in=2.0, bottom_in=6.5, uplift_ratio=0.20,
     wrap_chars_limit=20, align_center=True
@@ -185,7 +190,6 @@ def add_center_paragraph(
 
     slide_w_in, _ = slide_size_in(prs)
     width_in = box_width_in if box_width_in else max(1.0, slide_w_in - left_in - right_margin_in)
-    # If width explicitly set, center the box horizontally
     if box_width_in:
         left_in = max(0.5, (slide_w_in - box_width_in) / 2.0)
 
@@ -249,7 +253,22 @@ with st.sidebar:
     date_str = st.text_input("Date", str(date.today()))
     st.markdown("---")
 
-# Defaults
+# ===== Mission area (TOP) with uploaders next to text =====
+st.subheader("Mission & Images")
+col_text, col_uploads = st.columns([2, 1], vertical_alignment="top")
+
+with col_text:
+    mission_text = st.text_area(
+        "Your mission (short statement)",
+        value="Make pet transport effortless, safe, and on-demand—anywhere.",
+        height=100
+    )
+
+with col_uploads:
+    logo_upload = st.file_uploader("Upload your company logo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="logo")
+    team_upload = st.file_uploader("Upload your team photo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="team")
+
+# Defaults below
 st.subheader("Hook (one or two strong lines)")
 hook = st.text_area("Your hook", value="From nap to vet in one tap!", height=100)
 
@@ -368,26 +387,67 @@ def build_ppt(payload):
         rr = par.add_run(); rr.text=line; rr.font.size=Pt(22 if i==0 else 20); rr.font.color.rgb=RGBColor(255,255,255)
         par.alignment = PP_ALIGN.CENTER
 
-    # 2) RADOM MISSION (image centered)
-    s2 = prs.slides.add_slide(blank)
-    add_full_bleed_bg(s2, BODY_BG, prs)
-    add_title_bar(s2, "OUR MISSION", size_pt=36)
-    slide_w_in, _ = slide_size_in(prs)
-    img_max_w_in = slide_w_in - 1.8
-    img_max_h_in = (6.5 - 2.0) * 0.9
-    pic = s2.shapes.add_picture(MISSION_IMG, Inches(0), Inches(0))
-    img_w_in = pic.width / EMU_PER_INCH
-    img_h_in = pic.height / EMU_PER_INCH
-    scale = min(img_max_w_in / img_w_in, img_max_h_in / img_h_in)
-    pic.width = int(img_w_in * scale * EMU_PER_INCH)
-    pic.height = int(img_h_in * scale * EMU_PER_INCH)
-    pic.left = int((slide_w_in - (pic.width / EMU_PER_INCH)) / 2.0 * EMU_PER_INCH)
-    content_top, content_bottom = 2.0, 6.5
-    avail_h = content_bottom - content_top
-    y_center = content_top + avail_h / 2.0 - (0.20 * avail_h)  # lifted 20%
-    pic.top = int((y_center - (pic.height / EMU_PER_INCH) / 2.0) * EMU_PER_INCH)
+    # Helper for left-image/right-text layout (used by Mission & Team)
+    def left_image_right_text(slide, title, image_path, text, *, font_pt=30, pair_char_limit=20):
+        add_full_bleed_bg(slide, BODY_BG, prs)
+        add_title_bar(slide, title, size_pt=36)
 
-    # helper to make bullet slides
+        max_h = 6.5 - 2.0
+        slide_w_in, _ = slide_size_in(prs)
+        gap_in = 0.6
+        left_margin = 0.9
+        right_margin = 0.9
+
+        # Decide panel geometry depending on image presence
+        if image_path and Path(image_path).exists():
+            pic = slide.shapes.add_picture(image_path, Inches(0), Inches(0))
+            img_w_in = pic.width / EMU_PER_INCH
+            img_h_in = pic.height / EMU_PER_INCH
+            # ~5.2" target width on left
+            scale = min(5.2 / img_w_in, max_h / img_h_in)
+            pic.width = int(img_w_in * scale * EMU_PER_INCH)
+            pic.height = int(img_h_in * scale * EMU_PER_INCH)
+            pic.left = Inches(left_margin)
+            avail_h = 6.5 - 2.0
+            y_center = 2.0 + avail_h / 2.0 - (0.20 * avail_h)
+            pic.top = int((y_center - (pic.height / EMU_PER_INCH) / 2.0) * EMU_PER_INCH)
+
+            text_left = (pic.left / EMU_PER_INCH) + (pic.width / EMU_PER_INCH) + gap_in
+            text_width = max(1.0, slide_w_in - text_left - right_margin)
+        else:
+            # No image: use full width block
+            text_left = left_margin
+            text_width = max(1.0, slide_w_in - left_margin - right_margin)
+
+        # Text lines with smart wrapping (<= 2 words per line)
+        lines = wrap_two_words_smart(text or "—", pair_char_limit=pair_char_limit)
+
+        line_h_in = (font_pt * 1.35) / 72.0
+        total_h_in = max(1, len(lines)) * line_h_in
+        avail_h2 = 6.5 - 2.0
+        base_top = 2.0 + max(0.0, (avail_h2 - total_h_in) / 2.0)
+        top_pos = base_top - 0.20 * avail_h2
+
+        tb = slide.shapes.add_textbox(Inches(text_left), Inches(top_pos),
+                                      Inches(text_width), Inches(total_h_in + 0.2))
+        tf = tb.text_frame; tf.clear()
+        tf.word_wrap = True
+        for i, line in enumerate(lines):
+            p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
+            r = p.add_run(); r.text = line
+            r.font.size = Pt(font_pt); r.font.color.rgb = RGBColor(0,0,0)
+            p.alignment = PP_ALIGN.LEFT
+
+    # 2) Mission slide (logo on left, mission text on right)
+    s2 = prs.slides.add_slide(blank)
+    left_image_right_text(
+        s2, "OUR MISSION",
+        payload.get("logo_path"),
+        payload.get("mission_text", ""),
+        font_pt=30, pair_char_limit=20
+    )
+
+    # Helper to make bullet slides
     def make_bullets_slide(title, lines, size=28):
         s = prs.slides.add_slide(blank)
         add_full_bleed_bg(s, BODY_BG, prs)
@@ -409,53 +469,19 @@ def build_ppt(payload):
     add_title_bar(s4, "WHAT ARE WE ABOUT?", size_pt=36)
     add_center_paragraph(
         s4, prs, payload.get("hook","—"), font_pt=32,
-        box_width_in=9.5,  # center the box horizontally
+        box_width_in=9.5,
         top_in=2.0, bottom_in=6.5, uplift_ratio=0.20,
         wrap_chars_limit=20, align_center=True
     )
 
-    # 5) Our team (image left, text right). Text: <= 2 words per line with smart split
+    # 5) Team slide (uploaded team image on left, text on right)
     s5 = prs.slides.add_slide(blank)
-    add_full_bleed_bg(s5, BODY_BG, prs)
-    add_title_bar(s5, "OUR TEAM", size_pt=36)
-
-    max_h = 6.5 - 2.0
-    pic2 = s5.shapes.add_picture(TEAM_IMG, Inches(0), Inches(0))
-    img2_w_in = pic2.width / EMU_PER_INCH
-    img2_h_in = pic2.height / EMU_PER_INCH
-    scale2 = min(5.2 / img2_w_in, max_h / img2_h_in)  # ~5.2" wide left panel
-    pic2.width = int(img2_w_in * scale2 * EMU_PER_INCH)
-    pic2.height = int(img2_h_in * scale2 * EMU_PER_INCH)
-    pic2.left = Inches(0.9)
-    avail_h2 = 6.5 - 2.0
-    y_center2 = 2.0 + avail_h2 / 2.0 - (0.20 * avail_h2)
-    pic2.top = int((y_center2 - (pic2.height / EMU_PER_INCH) / 2.0) * EMU_PER_INCH)
-
-    slide_w_in, _ = slide_size_in(prs)
-    gap_in = 0.6
-    right_text_left = (pic2.left / EMU_PER_INCH) + (pic2.width / EMU_PER_INCH) + gap_in
-    right_text_width = max(1.0, slide_w_in - right_text_left - 0.9)
-
-    team_text = ("Diverse, resourceful, motivated team, "
-                 "battle-hardened by 31 years of combined entrepreneurial experience.")
-    team_lines = wrap_two_words_smart(team_text, pair_char_limit=20)
-
-    # Build a vertically centered block on the right
-    line_font_pt = 30
-    line_h_in = (line_font_pt * 1.35) / 72.0
-    total_h_in = max(1, len(team_lines)) * line_h_in
-    base_top = 2.0 + max(0.0, (avail_h2 - total_h_in) / 2.0)
-    top_right = base_top - 0.20 * avail_h2
-
-    tb = s5.shapes.add_textbox(Inches(right_text_left), Inches(top_right),
-                               Inches(right_text_width), Inches(total_h_in + 0.2))
-    tf = tb.text_frame; tf.clear()
-    tf.word_wrap = True
-    for i, line in enumerate(team_lines):
-        p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
-        r = p.add_run(); r.text = line
-        r.font.size = Pt(line_font_pt); r.font.color.rgb = RGBColor(0,0,0)
-        p.alignment = PP_ALIGN.LEFT
+    left_image_right_text(
+        s5, "OUR TEAM",
+        payload.get("team_path"),
+        payload.get("team_text", ""),
+        font_pt=30, pair_char_limit=20
+    )
 
     # 6) How does it work?
     make_bullets_slide("HOW DOES IT WORK?", payload["slides"]["how"], size=28)
@@ -484,10 +510,10 @@ def build_ppt(payload):
     add_title_bar(s10, "REAL-WORLD EXAMPLE", size_pt=36)
     add_center_paragraph(
         s10, prs, payload.get("but_funnel","—"), font_pt=28,
-        box_width_in=9.5,          # center the box
+        box_width_in=9.5,
         top_in=2.0, bottom_in=6.5, uplift_ratio=0.20,
-        wrap_chars_limit=36,       # slightly wider lines
-        align_center=False         # << left-aligned paragraph
+        wrap_chars_limit=36,
+        align_center=False
     )
 
     # 11) Thank you
@@ -504,6 +530,10 @@ def build_ppt(payload):
 # Build button (drop None -> keep 50% -> WHAC targets -> High then Med)
 # -----------------------------
 if st.button("Build Deck"):
+    # Persist uploads to temp files
+    logo_path = save_upload_to_tmp(logo_upload, "logo_upload") if logo_upload else None
+    team_path = save_upload_to_tmp(team_upload, "team_upload") if team_upload else None
+
     # 1) Collect bullets
     all_bullets = []
     for items, cat, linkflag in [
@@ -570,12 +600,19 @@ if st.button("Build Deck"):
     what_list = [b["text"] for b in selected["WHAT"]]
 
     payload = {
-        "project_title": project_title,
-        "author": author,
-        "place": place,
-        "date": date_str,
+        "project_title": st.session_state.get("project_title", ""),
+        "author": st.session_state.get("author", ""),
+        "place": st.session_state.get("place", ""),
+        "date": st.session_state.get("date_str", ""),
         "hook": hook,
         "but_funnel": but_funnel,
+
+        # New items
+        "mission_text": mission_text,
+        "logo_path": logo_path,
+        "team_path": team_path,
+        "team_text": "Diverse, resourceful, motivated team, battle-hardened by 31 years of combined entrepreneurial experience.",
+
         "slides": {
             "what_top3": what_list[:3],
             "what_rest": what_list[3:],
@@ -587,6 +624,12 @@ if st.button("Build Deck"):
         }
     }
 
+    # The sidebar inputs above aren’t automatically in session_state keys we used; set them explicitly:
+    payload["project_title"] = st.session_state.get("project_title", "") or st.session_state.get("Pitch Deck Name", project_title)
+    payload["author"] = st.session_state.get("Creator Name", author)
+    payload["place"] = st.session_state.get("Place", place)
+    payload["date"] = st.session_state.get("Date", date_str)
+
     prs = build_ppt(payload)
     buf = io.BytesIO()
     prs.save(buf)
@@ -594,7 +637,7 @@ if st.button("Build Deck"):
     st.download_button(
         "Download PPTX",
         data=buf.getvalue(),
-        file_name="pitch_deck_radom_style.pptx",
+        file_name="pitch_deck_customized.pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
     )
     st.success("Deck built! Download is ready.")
