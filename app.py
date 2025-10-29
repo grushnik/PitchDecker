@@ -371,7 +371,7 @@ def build_ppt(payload):
     # 2) RADOM MISSION (image centered)
     s2 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s2, BODY_BG, prs)
-    add_title_bar(s2, "RADOM MISSION", size_pt=36)
+    add_title_bar(s2, "OUR MISSION", size_pt=36)
     slide_w_in, _ = slide_size_in(prs)
     img_max_w_in = slide_w_in - 1.8
     img_max_h_in = (6.5 - 2.0) * 0.9
