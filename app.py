@@ -189,11 +189,11 @@ def target_counts(total, ratios):
 # Streamlit UI
 # -----------------------------
 st.set_page_config(page_title="3-Minute Pitch Deck Builder", layout="wide")
-st.title("3-Minute Rule Pitch Deck Builder (Radom style)")
+st.title("Deck Builder inspired by 3-Minute Rule book by Brant Pinvidic ")
 
 with st.sidebar:
     st.header("Deck Header")
-    project_title = st.text_input("Pitch Deck Name", "N2bio Technology")
+    project_title = st.text_input("Pitch Deck Name", "Uber for cats")
     author = st.text_input("Creator Name", "Elizaveta Grushnikova")
     place = st.text_input("Place", "Pewaukee, WI")
     date_str = st.text_input("Date", str(date.today()))
