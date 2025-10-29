@@ -221,8 +221,8 @@ hook = st.text_area("Your hook", value="From nap to vet in one tap!", height=100
 
 st.subheader("But Funnel (short real-world example)")
 but_funnel_default = (
-    "Last month, a cat named Mittens disappeared in Milwaukee and turned up in Madison.
-Her owner opened the app, hit “Express,” and Uber for Cats brought her home before dinner."
+    "Last month, a cat named Mittens disappeared in Milwaukee and turned up in Madison.\n"
+    "Her owner opened the app, hit \"Express,\" and Uber for Cats brought her home before dinner.\n"
     "In Europe, there are about 1,000 biodigesters, largely because they receive government funding."
 )
 but_funnel = st.text_area("This story will appear on the 'Real-world example' slide",
