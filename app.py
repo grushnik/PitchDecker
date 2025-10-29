@@ -12,6 +12,9 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
 
+# Pillow for safe image normalization to PNG
+from PIL import Image
+
 # -----------------------------
 # Assets / helpers
 # -----------------------------
@@ -44,20 +47,37 @@ def add_full_bleed_bg(slide, image_path, prs):
     slide.shapes.add_picture(image_path, Inches(0), Inches(0),
                              width=prs.slide_width, height=prs.slide_height)
 
-def save_upload_to_tmp(uploaded_file, fallback_name: str) -> str | None:
-    """Persist an uploaded file to a temp path and return the path; None if nothing uploaded."""
+def save_upload_image_as_png(uploaded_file, fallback_name: str) -> str | None:
+    """
+    Persist an uploaded image to a temp PNG file and return its path.
+    Converts any supported format to PNG to avoid python-pptx format errors.
+    Returns None if no file provided or conversion fails.
+    """
     if not uploaded_file:
         return None
-    suffix = Path(uploaded_file.name).suffix or ".png"
-    tmp_dir = Path(tempfile.gettempdir())
-    tmp_path = tmp_dir / f"{fallback_name}{suffix}"
-    with open(tmp_path, "wb") as f:
-        f.write(uploaded_file.read())
-    return str(tmp_path)
+    try:
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        img = Image.open(uploaded_file)
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+        tmp_path = Path(tempfile.gettempdir()) / f"{fallback_name}.png"
+        img.save(tmp_path, format="PNG")
+        return str(tmp_path)
+    except Exception:
+        try:
+            tmp_path = Path(tempfile.gettempdir()) / f"{fallback_name}.png"
+            data = uploaded_file.getbuffer() if hasattr(uploaded_file, "getbuffer") else uploaded_file.read()
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+            return str(tmp_path)
+        except Exception:
+            return None
 
 # ---------- Wrapping helpers ----------
 def wrap_chars(text: str, max_chars: int) -> list[str]:
-    """Wrap text to lines of at most max_chars, without splitting words."""
     words = (text or "").split()
     if not words:
         return [""]
@@ -72,7 +92,6 @@ def wrap_chars(text: str, max_chars: int) -> list[str]:
     return lines
 
 def wrap_by_wordcount(text: str, max_words: int) -> list[str]:
-    """Wrap text so each line has at most max_words (don’t split words)."""
     words = (text or "").split()
     if not words:
         return [""]
@@ -88,15 +107,9 @@ def wrap_by_wordcount(text: str, max_words: int) -> list[str]:
     return lines
 
 def wrap_two_words_smart(text: str, pair_char_limit: int = 20) -> list[str]:
-    """
-    Up to 2 words per line. If putting 2 words together would make
-    the line length >= pair_char_limit, keep only the first word on
-    that line and push the second word to the next line.
-    """
     words = (text or "").split()
     if not words:
         return [""]
-
     lines = []
     i = 0
     while i < len(words):
@@ -115,7 +128,7 @@ def wrap_two_words_smart(text: str, pair_char_limit: int = 20) -> list[str]:
             i += 1
     return lines
 
-# ---- Title bar: all caps, white, left aligned in the purple ribbon
+# ---- Title bar
 def add_title_bar(slide, text, *, size_pt=36):
     title_text = (text or "").upper()
     tx = slide.shapes.add_textbox(Inches(0.9), Inches(0.35), Inches(11.2), Inches(1.3))
@@ -253,20 +266,20 @@ with st.sidebar:
     date_str = st.text_input("Date", str(date.today()))
     st.markdown("---")
 
-# ===== Mission area (TOP) with uploaders next to text =====
-st.subheader("Mission & Images")
-col_text, col_uploads = st.columns([2, 1], vertical_alignment="top")
+# ===== Mission (full width) then uploaders BELOW =====
+st.subheader("Mission")
+mission_text = st.text_area(
+    "Your mission (short statement)",
+    value="Make pet transport effortless, safe, and on-demand—anywhere.",
+    height=120
+)
 
-with col_text:
-    mission_text = st.text_area(
-        "Your mission (short statement)",
-        value="Make pet transport effortless, safe, and on-demand—anywhere.",
-        height=100
-    )
-
-with col_uploads:
-    logo_upload = st.file_uploader("Upload your company logo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="logo")
-    team_upload = st.file_uploader("Upload your team photo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="team")
+st.markdown("#### Images")
+col_logo, col_team = st.columns(2)
+with col_logo:
+    logo_upload = st.file_uploader("Upload your company logo (PNG/JPG/WEBP)", type=["png", "jpg", "jpeg", "webp"], key="logo")
+with col_team:
+    team_upload = st.file_uploader("Upload your team photo (PNG/JPG/WEBP)", type=["png", "jpg", "jpeg", "webp"], key="team")
 
 # Defaults below
 st.subheader("Hook (one or two strong lines)")
@@ -387,7 +400,7 @@ def build_ppt(payload):
         rr = par.add_run(); rr.text=line; rr.font.size=Pt(22 if i==0 else 20); rr.font.color.rgb=RGBColor(255,255,255)
         par.alignment = PP_ALIGN.CENTER
 
-    # Helper for left-image/right-text layout (used by Mission & Team)
+    # Helper: left-image/right-text (Mission & Team)
     def left_image_right_text(slide, title, image_path, text, *, font_pt=30, pair_char_limit=20):
         add_full_bleed_bg(slide, BODY_BG, prs)
         add_title_bar(slide, title, size_pt=36)
@@ -398,12 +411,10 @@ def build_ppt(payload):
         left_margin = 0.9
         right_margin = 0.9
 
-        # Decide panel geometry depending on image presence
         if image_path and Path(image_path).exists():
             pic = slide.shapes.add_picture(image_path, Inches(0), Inches(0))
             img_w_in = pic.width / EMU_PER_INCH
             img_h_in = pic.height / EMU_PER_INCH
-            # ~5.2" target width on left
             scale = min(5.2 / img_w_in, max_h / img_h_in)
             pic.width = int(img_w_in * scale * EMU_PER_INCH)
             pic.height = int(img_h_in * scale * EMU_PER_INCH)
@@ -415,11 +426,9 @@ def build_ppt(payload):
             text_left = (pic.left / EMU_PER_INCH) + (pic.width / EMU_PER_INCH) + gap_in
             text_width = max(1.0, slide_w_in - text_left - right_margin)
         else:
-            # No image: use full width block
             text_left = left_margin
             text_width = max(1.0, slide_w_in - left_margin - right_margin)
 
-        # Text lines with smart wrapping (<= 2 words per line)
         lines = wrap_two_words_smart(text or "—", pair_char_limit=pair_char_limit)
 
         line_h_in = (font_pt * 1.35) / 72.0
@@ -438,7 +447,7 @@ def build_ppt(payload):
             r.font.size = Pt(font_pt); r.font.color.rgb = RGBColor(0,0,0)
             p.alignment = PP_ALIGN.LEFT
 
-    # 2) Mission slide (logo on left, mission text on right)
+    # 2) Mission slide
     s2 = prs.slides.add_slide(blank)
     left_image_right_text(
         s2, "OUR MISSION",
@@ -460,10 +469,10 @@ def build_ppt(payload):
         )
         return s
 
-    # 3) WHAT IS IT?  (Top 3 WHAT)
+    # 3) WHAT IS IT?
     make_bullets_slide("WHAT IS IT?", payload["slides"]["what_top3"], size=32)
 
-    # 4) Hook (centered; 20-char wrapping)
+    # 4) Hook
     s4 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s4, BODY_BG, prs)
     add_title_bar(s4, "WHAT ARE WE ABOUT?", size_pt=36)
@@ -474,7 +483,7 @@ def build_ppt(payload):
         wrap_chars_limit=20, align_center=True
     )
 
-    # 5) Team slide (uploaded team image on left, text on right)
+    # 5) Team slide
     s5 = prs.slides.add_slide(blank)
     left_image_right_text(
         s5, "OUR TEAM",
@@ -504,7 +513,7 @@ def build_ppt(payload):
     # 9) Can you do it?
     make_bullets_slide("CAN YOU DO IT?", payload["slides"]["cydi"], size=28)
 
-    # 10) Real-world example (block centered, text left-aligned like a paragraph)
+    # 10) Real-world example
     s10 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s10, BODY_BG, prs)
     add_title_bar(s10, "REAL-WORLD EXAMPLE", size_pt=36)
@@ -527,12 +536,12 @@ def build_ppt(payload):
     return prs
 
 # -----------------------------
-# Build button (drop None -> keep 50% -> WHAC targets -> High then Med)
+# Build button
 # -----------------------------
 if st.button("Build Deck"):
-    # Persist uploads to temp files
-    logo_path = save_upload_to_tmp(logo_upload, "logo_upload") if logo_upload else None
-    team_path = save_upload_to_tmp(team_upload, "team_upload") if team_upload else None
+    # Normalize uploads to PNG
+    logo_path = save_upload_image_as_png(logo_upload, "logo_upload")
+    team_path = save_upload_image_as_png(team_upload, "team_upload")
 
     # 1) Collect bullets
     all_bullets = []
@@ -569,7 +578,6 @@ if st.button("Build Deck"):
     for b in pool:
         tier = "H" if b["priority"] >= 5 else "M"
         by_cat[b["category"]][tier].append(b)
-
     for c in by_cat:
         by_cat[c]["H"].sort(key=lambda x: x["idx"])
         by_cat[c]["M"].sort(key=lambda x: x["idx"])
@@ -600,19 +608,16 @@ if st.button("Build Deck"):
     what_list = [b["text"] for b in selected["WHAT"]]
 
     payload = {
-        "project_title": st.session_state.get("project_title", ""),
-        "author": st.session_state.get("author", ""),
-        "place": st.session_state.get("place", ""),
-        "date": st.session_state.get("date_str", ""),
+        "project_title": project_title,
+        "author": author,
+        "place": place,
+        "date": date_str,
         "hook": hook,
         "but_funnel": but_funnel,
-
-        # New items
         "mission_text": mission_text,
         "logo_path": logo_path,
         "team_path": team_path,
         "team_text": "Diverse, resourceful, motivated team, battle-hardened by 31 years of combined entrepreneurial experience.",
-
         "slides": {
             "what_top3": what_list[:3],
             "what_rest": what_list[3:],
@@ -623,12 +628,6 @@ if st.button("Build Deck"):
             "cydi": [b["text"] for b in selected["CYDI"]],
         }
     }
-
-    # The sidebar inputs above aren’t automatically in session_state keys we used; set them explicitly:
-    payload["project_title"] = st.session_state.get("project_title", "") or st.session_state.get("Pitch Deck Name", project_title)
-    payload["author"] = st.session_state.get("Creator Name", author)
-    payload["place"] = st.session_state.get("Place", place)
-    payload["date"] = st.session_state.get("Date", date_str)
 
     prs = build_ppt(payload)
     buf = io.BytesIO()
