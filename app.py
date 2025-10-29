@@ -77,7 +77,40 @@ def wrap_by_wordcount(text: str, max_words: int) -> list[str]:
         lines.append(" ".join(bucket))
     return lines
 
-# ---- Title bar: all caps, white, centered vertically in the purple ribbon
+def wrap_two_words_smart(text: str, pair_char_limit: int = 20) -> list[str]:
+    """
+    Up to 2 words per line. If putting 2 words together would make
+    the line length >= pair_char_limit, keep only the first word on
+    that line and push the second word to the next line.
+    """
+    words = (text or "").split()
+    if not words:
+        return [""]
+
+    lines = []
+    i = 0
+    while i < len(words):
+        # always place the first word
+        first = words[i]
+        # attempt to place a second word
+        if i + 1 < len(words):
+            second = words[i + 1]
+            pair_len = len(first) + 1 + len(second)  # include a space
+            if pair_len >= pair_char_limit:
+                # too long as a pair => single word line
+                lines.append(first)
+                i += 1
+            else:
+                # pair fits
+                lines.append(first + " " + second)
+                i += 2
+        else:
+            # last single word
+            lines.append(first)
+            i += 1
+    return lines
+
+# ---- Title bar: all caps, white, left aligned in the purple ribbon
 def add_title_bar(slide, text, *, size_pt=36):
     title_text = (text or "").upper()
     tx = slide.shapes.add_textbox(Inches(0.9), Inches(0.35), Inches(11.2), Inches(1.3))
@@ -91,7 +124,7 @@ def add_title_bar(slide, text, *, size_pt=36):
     p.alignment = PP_ALIGN.LEFT
     return tx
 
-# ---- Bullets block: left-aligned, full-width, vertically centered then lifted 20%
+# ---- Bullets block
 def add_left_bullets_vert_center(
     slide, prs, lines, *, font_pt=28,
     left_in=0.9, right_margin_in=0.9,
@@ -160,6 +193,7 @@ def add_center_paragraph(
                                   Inches(width_in), Inches(total_h_in + 0.2))
     tf = tx.text_frame
     tf.clear()
+    tf.word_wrap = True
     for i, line in enumerate(chunks):
         p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
         run = p.add_run()
@@ -221,9 +255,8 @@ hook = st.text_area("Your hook", value="From nap to vet in one tap!", height=100
 
 st.subheader("But Funnel (short real-world example)")
 but_funnel_default = (
-    "Last month, a cat named Mittens disappeared in Milwaukee and turned up in Madison.\n"
-    "Her owner opened the app, hit \"Express,\" and Uber for Cats brought her home before dinner.\n"
-    "In Europe, there are about 1,000 biodigesters, largely because they receive government funding."
+    "Last month, a cat named Mittens disappeared in Milwaukee and turned up in Madison. "
+    "Her owner opened the app, hit \"Express,\" and Uber for Cats brought her home before dinner."
 )
 but_funnel = st.text_area("This story will appear on the 'Real-world example' slide",
                           value=but_funnel_default, height=160)
@@ -381,7 +414,7 @@ def build_ppt(payload):
         wrap_chars_limit=20, align_center=True
     )
 
-    # 5) Our team (image left, text right). Text: **max two words per line**
+    # 5) Our team (image left, text right). Text: <= 2 words per line with smart split
     s5 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s5, BODY_BG, prs)
     add_title_bar(s5, "RADOM TEAM", size_pt=36)
@@ -405,10 +438,11 @@ def build_ppt(payload):
 
     team_text = ("Diverse, resourceful, motivated team, "
                  "battle-hardened by 31 years of combined entrepreneurial experience.")
-    team_lines = wrap_by_wordcount(team_text, max_words=2)  # <= 2 words per line
+    team_lines = wrap_two_words_smart(team_text, pair_char_limit=20)
 
     # Build a vertically centered block on the right
-    line_h_in = (30 * 1.35) / 72.0
+    line_font_pt = 30
+    line_h_in = (line_font_pt * 1.35) / 72.0
     total_h_in = max(1, len(team_lines)) * line_h_in
     base_top = 2.0 + max(0.0, (avail_h2 - total_h_in) / 2.0)
     top_right = base_top - 0.20 * avail_h2
@@ -416,10 +450,11 @@ def build_ppt(payload):
     tb = s5.shapes.add_textbox(Inches(right_text_left), Inches(top_right),
                                Inches(right_text_width), Inches(total_h_in + 0.2))
     tf = tb.text_frame; tf.clear()
+    tf.word_wrap = True
     for i, line in enumerate(team_lines):
         p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
         r = p.add_run(); r.text = line
-        r.font.size = Pt(30); r.font.color.rgb = RGBColor(0,0,0)
+        r.font.size = Pt(line_font_pt); r.font.color.rgb = RGBColor(0,0,0)
         p.alignment = PP_ALIGN.LEFT
 
     # 6) How does it work?
@@ -443,15 +478,16 @@ def build_ppt(payload):
     # 9) Can you do it?
     make_bullets_slide("CAN YOU DO IT?", payload["slides"]["cydi"], size=28)
 
-    # 10) Real-world example (centered horizontally & vertically)
+    # 10) Real-world example (block centered, text left-aligned like a paragraph)
     s10 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s10, BODY_BG, prs)
     add_title_bar(s10, "REAL-WORLD EXAMPLE", size_pt=36)
     add_center_paragraph(
         s10, prs, payload.get("but_funnel","—"), font_pt=28,
-        box_width_in=9.5,  # center the box; slightly narrower for margins
+        box_width_in=9.5,          # center the box
         top_in=2.0, bottom_in=6.5, uplift_ratio=0.20,
-        wrap_chars_limit=28, align_center=True
+        wrap_chars_limit=36,       # slightly wider lines
+        align_center=False         # << left-aligned paragraph
     )
 
     # 11) Thank you
