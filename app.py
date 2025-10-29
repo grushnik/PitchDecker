@@ -417,7 +417,7 @@ def build_ppt(payload):
     # 5) Our team (image left, text right). Text: <= 2 words per line with smart split
     s5 = prs.slides.add_slide(blank)
     add_full_bleed_bg(s5, BODY_BG, prs)
-    add_title_bar(s5, "RADOM TEAM", size_pt=36)
+    add_title_bar(s5, "OUR TEAM", size_pt=36)
 
     max_h = 6.5 - 2.0
     pic2 = s5.shapes.add_picture(TEAM_IMG, Inches(0), Inches(0))
